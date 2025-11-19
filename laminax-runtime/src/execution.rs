@@ -2,41 +2,38 @@
 //!
 //! Handles the actual running of compiled kernels on devices.
 
-use super::Result;
+use super::{Device, Result};
 use super::graph::ExecutionPlan;
-use super::memory::{Buffer, MemoryManager};
+use super::memory::{Buffer, BufferProperties, MemoryManager};
 use laminax_types::{DType, Shape};
 use laminax_lcir as lcir;
-use laminax_types::Device;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Compiled kernel instance ready for execution
-pub struct KernelInstance {
+pub struct KernelInstance<D: Device> {
     pub name: String,
-    pub device: Arc<dyn Device>,
+    pub device: Arc<D>,
     // In real implementation, this would hold compiled code
 }
 
 /// Executor manages kernel execution on a specific device
-pub struct Executor {
-    device: Arc<dyn Device>,
-    memory_manager: Arc<MemoryManager>,
-    buffers: HashMap<usize, Buffer>, // buffer_id -> buffer
+pub struct Executor<D: Device> {
+    device: Arc<D>,
+    buffers: HashMap<usize, Buffer<D::Storage>>, // buffer_id -> buffer
 }
 
-impl Executor {
-    pub fn new(device: Arc<dyn Device>, memory_manager: Arc<MemoryManager>) -> Result<Self> {
+impl<D: Device> Executor<D> {
+    pub fn new(device: Arc<D>) -> Result<Self> {
         Ok(Self {
             device,
-            memory_manager,
             buffers: HashMap::new(),
         })
     }
 
     /// Allocate a buffer for tensor data
-    pub fn allocate_buffer(&mut self, shape: Shape, dtype: DType) -> Result<Buffer> {
-        let buffer = self.memory_manager.allocate(shape, dtype, &self.device)?;
+    pub fn allocate_buffer(&mut self, shape: Shape, dtype: DType, buffer_properties: BufferProperties) -> Result<Buffer<D::Storage>> {
+        let buffer = self.device.allocate(shape, dtype, buffer_properties)?;
         self.buffers.insert(buffer.id, buffer.clone());
         Ok(buffer)
     }
@@ -47,18 +44,22 @@ impl Executor {
         shape: Shape,
         dtype: DType,
         data: Vec<u8>,
-    ) -> Result<Buffer> {
-        let buffer = self.allocate_buffer(shape, dtype)?;
+        buffer_properties: BufferProperties
+    ) -> Result<Buffer<D::Storage>> {
+        let buffer = self.allocate_buffer(shape, dtype, buffer_properties.clone())?;
+        if self.device.require_staging() {
+
+        }
         // Copy data to buffer
-        {
-            let mut buf_data = buffer.data.lock().unwrap();
-            buf_data.copy_from_slice(&data);
+        write_to.copy_from_slice(&data);
+        if self.device.require_staging() {
+
         }
         Ok(buffer)
     }
 
     /// Read data from buffer back to host
-    pub fn read_buffer(&self, buffer: &Buffer) -> Result<Vec<u8>> {
+    pub fn read_buffer(&self, buffer: &Buffer<D::Storage>) -> Result<Vec<u8>> {
         // For CPU, just return a copy of the buffer data
         let data = buffer.data.lock().unwrap();
         Ok(data.clone())
@@ -68,7 +69,7 @@ impl Executor {
     pub fn execute_plan(
         &mut self,
         plan: &ExecutionPlan,
-        buffers: &HashMap<lcir::TensorId, Buffer>,
+        buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
     ) -> Result<()> {
         println!(
             "Executing plan with {} operations on {}",
@@ -89,7 +90,7 @@ impl Executor {
     fn execute_operation(
         &mut self,
         node: &super::graph::Node,
-        buffers: &HashMap<lcir::TensorId, Buffer>,
+        buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
     ) -> Result<()> {
         use lcir::Operation;
 
@@ -116,7 +117,7 @@ impl Executor {
 
     fn execute_binary_op(
         &mut self,
-        buffers: &HashMap<lcir::TensorId, Buffer>,
+        buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
         result: &lcir::TensorAccess,
         lhs: &lcir::TensorAccess,
         rhs: &lcir::TensorAccess,
@@ -152,7 +153,7 @@ impl Executor {
 
     fn execute_unary_op(
         &mut self,
-        _buffers: &HashMap<lcir::TensorId, Buffer>,
+        _buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
         _result: &lcir::TensorAccess,
         _op: &lcir::UnaryOp,
         _input: &lcir::TensorAccess,
@@ -163,7 +164,7 @@ impl Executor {
 
     fn execute_load_op(
         &mut self,
-        buffers: &HashMap<lcir::TensorId, Buffer>,
+        buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
         result: &lcir::TensorAccess,
         source: &lcir::TensorAccess,
     ) -> Result<()> {
@@ -182,7 +183,7 @@ impl Executor {
 
     fn execute_store_op(
         &mut self,
-        buffers: &HashMap<lcir::TensorId, Buffer>,
+        buffers: &HashMap<lcir::TensorId, Buffer<D::Storage>>,
         dest: &lcir::TensorAccess,
         value: &lcir::TensorAccess,
     ) -> Result<()> {
@@ -209,13 +210,13 @@ impl Executor {
         Ok(0)
     }
 
-    fn read_i32(&self, buffer: &Buffer, index: usize) -> i32 {
+    fn read_i32(&self, buffer: &Buffer<D::Storage>, index: usize) -> i32 {
         let data = buffer.data.lock().unwrap();
         let offset = index * 4; // i32 is 4 bytes
         i32::from_le_bytes(data[offset..offset+4].try_into().unwrap())
     }
 
-    fn write_i32(&self, buffer: &Buffer, index: usize, value: i32) {
+    fn write_i32(&self, buffer: &Buffer<D::Storage>, index: usize, value: i32) {
         let mut data = buffer.data.lock().unwrap();
         let offset = index * 4; // i32 is 4 bytes
         data[offset..offset+4].copy_from_slice(&value.to_le_bytes());
@@ -230,7 +231,7 @@ impl Executor {
     }
 
     /// Launch a compiled kernel (placeholder)
-    pub fn launch_kernel(&self, _kernel: &KernelInstance, _args: &[&Buffer]) -> Result<()> {
+    pub fn launch_kernel(&self, _kernel: &KernelInstance<D>, _args: &[&Buffer<D::Storage>]) -> Result<()> {
         // Placeholder for kernel launch
         Ok(())
     }
