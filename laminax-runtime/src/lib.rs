@@ -13,21 +13,26 @@ pub mod execution;
 pub mod graph;
 pub mod memory;
 
-pub use device::CpuDevice;
 pub use execution::{Executor, KernelInstance};
 pub use graph::{ComputationGraph, Edge, ExecutionPlan, Node};
 pub use memory::{Buffer, MemoryManager};
 
-// Re-export device types from laminax-types
-pub use laminax_types::{Device, DeviceCapabilities, DeviceType};
+// Re-export device abstraction layer
+pub use device::*;
+use crate::cpu::CpuDevice;
 
 /// Runtime error types
 #[derive(Debug)]
 pub enum RuntimeError {
+    /// Error occurred because of device internal failure.
     Device(String),
+    /// Error occurred because of memory failure such as double free or out of memory.
     Memory(String),
+    /// Error occurred because of invalid graph topology.
     Graph(String),
+    /// Error occurred because requested operation was illegal.
     Execution(String),
+    /// Error occurred because of failed compilation
     Compilation(String),
 }
 
@@ -47,39 +52,46 @@ impl std::error::Error for RuntimeError {}
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
+pub enum SupportedRuntime {
+    Cpu(Arc<CpuDevice>),
+    #[cfg(feature = "vulkan")]
+    Vulkan(Arc<vulkan::VulkanDevice>),
+}
+
 /// Main runtime context managing devices, memory, and execution
 pub struct Runtime {
-    devices: Vec<Arc<dyn Device>>,
-    memory_manager: Arc<MemoryManager>,
+    supported: Vec<SupportedRuntime>,
 }
 
 impl Runtime {
     /// Create a new runtime with available devices
-    pub fn new() -> Result<Self> {
-        let devices = device::enumerate_devices()?;
-        let memory_manager = Arc::new(MemoryManager::new(devices.clone())?);
+    pub fn new(requirements: DeviceCapabilities) -> Result<Self> {
+        let devices = enumerate_devices(requirements)?;
 
         Ok(Self {
-            devices,
-            memory_manager,
+            supported: devices,
         })
     }
 
     /// Get all available devices
-    pub fn devices(&self) -> &[Arc<dyn Device>] {
-        &self.devices
+    pub fn devices(&self) -> &[SupportedRuntime] {
+        &self.supported
     }
 
     /// Get the default CPU device
-    pub fn cpu_device(&self) -> Option<&Arc<dyn Device>> {
-        self.devices
+    pub fn host_device(&self) -> Option<&Arc<CpuDevice>> {
+        self.supported
             .iter()
-            .find(|d| d.device_type() == DeviceType::Cpu)
+            .find_map(|d| match d {
+                SupportedRuntime::Cpu(d) => Some(d),
+                _ => None,
+            })
     }
 
     /// Create an executor for running computations
-    pub fn executor(&self, device: Arc<dyn Device>) -> Result<Executor> {
-        Executor::new(device, Arc::clone(&self.memory_manager))
+    pub fn executor<D: Device>(&self) -> Option<Executor<D>> {
+        unimplemented!("Device Lookup is not implemented")
+        // Executor::new(device, Arc::clone(&self.memory_manager))
     }
 
     /// Execute a kernel directly (convenience method)
@@ -90,7 +102,7 @@ impl Runtime {
     ) -> Result<HashMap<String, Vec<u8>>> {
         let graph = ComputationGraph::from_lcir(kernel)?;
         let device = self
-            .cpu_device()
+            .host_device()
             .ok_or_else(|| RuntimeError::Device("No CPU device available".to_string()))?
             .clone();
 
@@ -139,6 +151,19 @@ pub fn execute_simple_kernel(
 ) -> Result<HashMap<String, Vec<u8>>> {
     let runtime = Runtime::new()?;
     runtime.execute_kernel(kernel, inputs)
+}
+
+impl From<Arc<CpuDevice>> for SupportedRuntime {
+    fn from(value: Arc<CpuDevice>) -> Self {
+        Self::Cpu(value)
+    }
+}
+
+#[cfg(feature = "vulkan")]
+impl From<Arc<vulkan::VulkanDevice>> for SupportedRuntime {
+    fn from(value: Arc<vulkan::VulkanDevice>) -> Self {
+        Self::Vulkan(value)
+    }
 }
 
 #[cfg(test)]
