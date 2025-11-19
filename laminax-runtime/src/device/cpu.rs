@@ -3,20 +3,25 @@
 //! Provides unified interfaces for different compute devices (CPU, GPU, etc.)
 //! Uses device types from laminax-types.
 
-use super::Result;
+use crate::device::{Device, DeviceCapabilities, DeviceType};
+use crate::memory::{BufferProperties, DeviceBuffer};
+use crate::{Backend, Buffer, MemoryManager, RuntimeError};
+use laminax_types::{DType, Shape};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use laminax_types::{Device, DeviceType, DeviceCapabilities};
 
 /// CPU device implementation
 pub struct CpuDevice {
     capabilities: DeviceCapabilities,
+    next_buffer_id: AtomicUsize,
 }
+
+/// Dummy Backend for CPU
+pub struct CpuBackend;
 
 impl CpuDevice {
     pub fn new() -> Self {
         let capabilities = DeviceCapabilities {
-            device_type: DeviceType::Cpu,
-            name: "CPU".to_string(),
             compute_units: std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(1), // Fallback to 1 if unavailable
@@ -30,8 +35,101 @@ impl CpuDevice {
             shared_memory: false,  // No special shared memory on CPU
         };
 
-        Self { capabilities }
+        Self {
+            capabilities,
+            next_buffer_id: AtomicUsize::new(0),
+        }
     }
+}
+
+impl Backend for CpuBackend {
+    type Device = CpuDevice;
+    const BACKEND_TYPE: DeviceType = DeviceType::Cpu;
+
+    fn discover_devices(&self, required_capabilities: DeviceCapabilities) -> Vec<Arc<Self::Device>> {
+        // TODO Support multi cpu
+        let cpu = CpuDevice::new();
+        if !cpu.capabilities.satisfies(&required_capabilities) {
+            vec![]
+        } else {
+            vec![Arc::new(cpu)]
+        }
+    }
+}
+
+impl Device for CpuDevice {
+    type Backend = CpuBackend;
+
+    fn device_type() -> DeviceType {
+        DeviceType::Cpu
+    }
+
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.capabilities.clone()
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "CPU"
+    }
+}
+
+impl MemoryManager for CpuDevice {
+    type Device = Self;
+    type Storage = Vec<u8>;
+    type FlushTarget = ();
+
+    fn allocate(
+        self: Arc<Self>,
+        shape: Shape,
+        dtype: DType,
+        _: BufferProperties,
+    ) -> crate::Result<Buffer<Vec<u8>>> {
+        let id = self
+            .next_buffer_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // For CPU, allocate actual memory
+        let size_bytes = shape.len() * dtype.dtype_size_bytes();
+        let data = Arc::new(vec![0u8; size_bytes]);
+
+        Ok(Buffer {
+            id,
+            shape,
+            dtype,
+            device: self.clone(),
+            data,
+        })
+    }
+
+    fn deallocate(self: Arc<Self>, _buffer: &Buffer<Vec<u8>>) -> crate::Result<()> {
+        // Placeholder for deallocation
+        Ok(())
+    }
+
+    fn copy(self: Arc<Self>, _src: &Buffer<Vec<u8>>, _dst: &Buffer<Vec<u8>>) -> crate::Result<()> {
+        // Placeholder for memory copy operations
+        Ok(())
+    }
+
+    fn require_staging(&self) -> bool {
+        false
+    }
+
+    fn stage(&self, _: Vec<u8>, _: &Buffer<Self::Storage>) -> crate::Result<()> {
+        Err(RuntimeError::Device("This device does not require staging records".to_string()))
+    }
+
+    fn flush(&self, _: &mut Self::FlushTarget) -> crate::Result<()> {
+        Err(RuntimeError::Device("This device does not require staging records".to_string()))
+    }
+}
+
+impl DeviceBuffer for Vec<u8> {
+    type Backend = CpuBackend;
 }
 
 /// Get system memory using std::fs and /proc/meminfo (Linux) or other platform-specific methods
@@ -86,31 +184,4 @@ fn get_system_memory() -> usize {
 
     // Fallback: estimate 8GB
     8 * 1024 * 1024 * 1024
-}
-
-impl Device for CpuDevice {
-    fn device_type(&self) -> DeviceType {
-        DeviceType::Cpu
-    }
-
-    fn capabilities(&self) -> &DeviceCapabilities {
-        &self.capabilities
-    }
-
-    fn is_available(&self) -> bool {
-        true // CPU is always available
-    }
-}
-
-/// Enumerate all available devices
-pub fn enumerate_devices() -> Result<Vec<Arc<dyn Device>>> {
-    let mut devices = Vec::new();
-
-    // Add CPU device
-    devices.push(Arc::new(CpuDevice::new()) as Arc<dyn Device>);
-
-    // TODO: Add GPU devices when available
-    // devices.extend(enumerate_gpu_devices()?);
-
-    Ok(devices)
 }
