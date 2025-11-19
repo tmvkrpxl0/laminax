@@ -15,11 +15,11 @@ pub struct CoralDevice {
     device_id: usize,
 }
 
+pub struct CoralBackend;
+
 impl CoralDevice {
     pub fn new(device_id: usize) -> Result<Self, String> {
         let capabilities = DeviceCapabilities {
-            device_type: DeviceType::Coral,
-            name: format!("Coral TPU {}", device_id),
             compute_units: 1, // Single TPU core
             max_work_group_size: 1, // TPU operations are typically batched
             local_memory_size: 8 * 1024 * 1024, // 8MB internal memory
@@ -43,6 +43,8 @@ impl CoralDevice {
 }
 
 impl Device for CoralDevice {
+    type Backend = CoralBackend;
+
     fn device_type(&self) -> DeviceType {
         DeviceType::Coral
     }
@@ -54,6 +56,10 @@ impl Device for CoralDevice {
     fn is_available(&self) -> bool {
         // Coral TPU requires specific hardware and Edge TPU runtime
         false // Would need to check for Edge TPU library
+    }
+
+    fn name(&self) -> &str {
+        todo!()
     }
 }
 
