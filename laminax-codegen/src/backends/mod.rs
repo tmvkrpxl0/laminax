@@ -8,9 +8,6 @@ pub mod cpu;
 pub mod cuda;
 pub mod metal;
 pub mod opencl;
-
-#[cfg(feature = "vulkan")]
-pub mod vulkan;
 pub mod webgpu;
 
 
