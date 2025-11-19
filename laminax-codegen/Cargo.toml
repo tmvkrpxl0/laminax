@@ -7,10 +7,3 @@ edition = "2024"
 lamina = "0.0.6"
 laminax = { path = "../" }
 laminax-lcir = { path = "../laminax-lcir" }
-
-[dependencies.vulkano]
-version = "0.35.2"
-optional = true
-
-[features]
-vulkan = ["dep:vulkano"]

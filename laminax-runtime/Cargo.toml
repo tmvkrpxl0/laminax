@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 laminax-types = { path = "../laminax-types" }
 laminax-lcir = { path = "../laminax-lcir" }
+
+[dependencies.vulkano]
+version = "0.35.2"
+optional = true
+
+[features]
+vulkan = []#["dep:vulkano"]
