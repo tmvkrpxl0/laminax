@@ -185,7 +185,7 @@ impl ComputationGraph {
         for (step, &node_id) in execution_order.iter().enumerate().rev() {
             let node = &self.nodes[node_id];
             for &tensor_id in &node.inputs {
-                if let Some((first, _)) = lifetimes.get_mut(&tensor_id) {
+                if lifetimes.contains_key(&tensor_id) {
                     *last_use.entry(tensor_id).or_insert(step) =
                         step.max(*last_use.get(&tensor_id).unwrap_or(&0));
                 }
