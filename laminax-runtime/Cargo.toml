@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 laminax-types = { path = "../laminax-types" }
 laminax-lcir = { path = "../laminax-lcir" }
+numina = "0.0.1"
 
 [dependencies.vulkano]
 version = "0.35.2"
